@@ -1,0 +1,212 @@
+<html>
+<head>
+<title>Setting up a RISC-V playground with Qemu</title>
+<style>
+body {
+	background-color: #F0F0F0;
+	margin-left: 24pt;
+	margin-right: 24pt;
+}
+h1, h2 {
+	color: #222222;
+	text-align: left;
+	font-family: sans-serif
+}
+p {
+	color: #222222;
+	font-family: serif;
+	font-size: 12pt;
+}
+pre {
+	margin-left: 14pt;
+	padding-top: 2pt;
+	padding-bottom: 2pt;
+	padding-right: 4pt;
+	padding-left: 4pt;
+	background-color: #F8F8F8;
+}
+</style>
+</head>
+<body>
+<p><a href="index.html">back to index</a></p>
+<h1>Setting up a RISC-V playground with Qemu</h1>
+
+<p>My plan was to set up Qemu running a custom-built Linux kernel and mount a
+rootfs over NFS. I used an NFS rootfs instead of a disk image because it's
+easier to share data between the virtualized Linux and the host. I use Debian
+because it's what I'm used to.</p>
+
+<p>General outline of how to do it:</p>
+
+<ol>
+<li>Get the Linux sources and build Linux</li>
+<li>Set up a basic rootfs for Linux to use</li>
+<li>Set up an NFS server for the rootfs</li>
+<li>Get the appropriate Qemu package</li>
+<li>Run Qemu</li>
+</ol>
+
+<h2>Get the Linux sources and build Linux</h2>
+
+<p>Install the relevant build tools referencing again the Debian RISC-V port page
+and the <a href="https://risc-v-getting-started-guide.readthedocs.io/en/latest/linux-qemu.html">RISC-V getting started guide</a>:</p>
+
+<pre><code>$ sudo apt install gcc-riscv64-linux-gnu autoconf automake autotools-dev \
+curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex \
+texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev git
+</code></pre>
+
+<p>Grab Linus's kernel sources:</p>
+
+<pre><code>$ git clone https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/
+</code></pre>
+
+<p>And build them:</p>
+
+<pre><code>$ cd linux
+$ git checkout v6.6
+$ make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- defconfig
+$ make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j 2
+</code></pre>
+
+<p>The uncompressed kernel image will be located at <code>arch/riscv/boot/Image</code>.</p>
+
+<h2>Set up a basic rootfs for Linux to use</h2>
+
+<p>Populate a basic root filesystem with debootstrap:</p>
+
+<pre><code>$ mkdir ~/riscv-root
+$ sudo debootstrap --arch=riscv64 unstable riscv-root
+</code></pre>
+
+<p>And configure it slightly:</p>
+
+<pre><code>$ sudo chroot riscv-root
+# passwd root
+(set a root passwor)
+# mkdir /home/me
+# useradd --home-dir /home/me --shell /bin/bash
+# passwd me
+(set a password for 'me')
+</code></pre>
+
+<h2>Set up an NFS server for the rootfs</h2>
+
+<p>Information for how to do this can be found on the <a href="https://wiki.debian.org/NFSServerSetup">Debian Wiki</a>.</p>
+
+<p>Install the server package:</p>
+
+<pre><code>$ sudo apt install nfs-kernel-server portmap
+</code></pre>
+
+<p>Add an entry to /etc/exports to serve the directory:</p>
+
+<pre><code>/home/me/riscv-root 127.0.0.1(rw,no_root_squash,no_subtree_check,insecure)
+</code></pre>
+
+<p>And tell the server to reload its config:</p>
+
+<pre><code>$ sudo exportfs -avr
+</code></pre>
+
+<p>You can test that your setup works by mounting the NFS export somewhere:</p>
+
+<pre><code>$ mkdir /tmp/mnt
+$ sudo mount 127.0.0.1:/home/me/riscv-root /tmp/mnt
+$ ls /tmp/mnt
+</code></pre>
+
+<h2>Get the appropriate Qemu package</h2>
+
+<p>I found that the <a href="https://wiki.debian.org/RISC-V">Debian RISC-V port page</a> had some information to get me started. 
+It suggested that I install the packages</p>
+
+<pre><code>$ sudo apt install qemu-system-misc qemu-user-static binfmt-support
+</code></pre>
+
+<p>(Using the debian <a href="https://www.debian.org/distrib/packages">package search page</a>, it turns out that the
+<a href="https://packages.debian.org/search?searchon=contents&amp;keywords=qemu-system-riscv64&amp;mode=path&amp;suite=stable&amp;arch=any">qemu-system-misc</a> package provices the <code>qemu-system-riscv64</code> binary).</p>
+
+<h2>Run Qemu</h2>
+
+<p>Parts of this command were taken from the RISC-V getting started guide, 
+from the <a href="https://www.kernel.org/doc/Documentation/filesystems/nfs/nfsroot.txt">Linux kernel nfsroot documentation</a>, and finally from </p>
+
+<pre><code>$ sudo qemu-system-riscv64 \
+-nographic \
+-machine virt \
+-kernel linux/arch/riscv/boot/Image \
+-netdev type=user,id=usernet -device netdev=usernet,driver=virtio-net \
+-append "root=/dev/nfs nfsroot=10.0.2.2:${HOME}/riscv-root,vers=3 rw \
+ ip=10.0.2.15::10.0.2.1:255.255.255.0 init=/sbin/init console=ttyS0"
+</code></pre>
+
+<p>See the section at the end "troubleshooting notes" for some things I tripped
+over.</p>
+
+<p>At any rate, Qemu should start with the console set to the current terminal and
+Linux should start booting, find the NFS rootdir, and then systemd will take
+over and start setting up the system. After a minute, you should be presented
+with a login screen:</p>
+
+<pre><code>Debian GNU/Linux trixie/sid debian ttyS0
+
+debian login: me
+Password: 
+Linux debian 6.6.0 #1 SMP Tue Oct 31 23:50:53 AEDT 2023 riscv64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Fri Nov  3 12:24:45 UTC 2023 on ttyS0
+me@debian:~$
+</code></pre>
+
+<p>If you've gotten this far, you now have a working emulated RISC-V linux system
+and can start playing around with it.</p>
+
+<h2>Epilogue</h2>
+
+<p>One of the first things you might want to do is install some packages. However
+one problem I've found when installing packages on the guest OS is that although
+the Qemu guest OS can connect to the host's network ports (via address
+10.0.2.2), it cannot connect to the open internet to contact the Debian packages
+servers. I've left this as a problem for "later" and am instead installing the
+packages from the host OS via:</p>
+
+<pre><code>$ sudo chroot riscv-root
+# apt install gcc binutils gdb make
+</code></pre>
+
+<p>I'll update this article when I figure out how to get networking to work better
+from the guest. In the meantime, it's faster anyway to just install via the
+host OS since it's not being emulated.</p>
+
+<h2>Troubleshooting</h2>
+
+<p>The <code>-netdev</code> and similar arguments that I passed to Qemu are magic to me at the
+moment (which I luckily found on <a href="https://blog.uxul.de/e?e=mt-421">somebody else's blog post</a>) but seem to be
+required even though many guides elsewhere omit it from the args passed to qemu.
+But I had to learn that the host can be reached at 10.0.2.2 from the guest.</p>
+
+<p>If you omit the <code>vers=3</code> argument to the nfsroot commandline setting,
+even if you have an NFS server running, the virtualised kernel won't be able to
+mount the root device because it defaults to version 2. You'll get a clue about
+this if you enable nfs server debugging via:</p>
+
+<pre><code>$ sudo rpcdebug -m nfsd -s all
+$ sudo tail -f /var/log/syslog
+</code></pre>
+
+<p>Then after starting Qemu, and you'll see messages like this on your host:</p>
+
+<pre><code>kernel: [603299.054298] svc: 127.0.0.1, port=47260: unknown version (2 for prog 100003, nfsd)
+</code></pre>
+
+<p>(I found more info about nfs server debugging at the <a href="https://www.suse.com/ja-jp/support/kb/doc/?id=000017990">Suse support docs</a>).</p>
+
+</body>
+</html>

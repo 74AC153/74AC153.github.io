@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+<channel>
+<title>Blog of 74153</title>
+<link>https://74ac153.github.io</link>
+<description>Articles about computers</description>
+<item>
+	<title>Programming patterns in RISC-V assembly: basic function calls</title>
+	<link>https://74ac153.github.io/20231223_Programming_patterns_in_RISC-V_assembly_:_basic_function_calls.html</link>
+</item>
+<item>
+	<title>Making a Linux system call using RISC-V assembly</title>
+	<link>https://74ac153.github.io/20231104_Making_A_System_Call_In_RISC-V_Assembly.html</link>
+</item>
+<item>
+	<title>Setting up a RISC-V playground with Qemu</title>
+	<link>https://74ac153.github.io/20231101_Setting_Up_A_RISC-V_Playground.html</link>
+</item>
+</channel>
+</rss>

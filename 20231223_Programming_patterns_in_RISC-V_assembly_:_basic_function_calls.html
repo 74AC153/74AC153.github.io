@@ -1,0 +1,284 @@
+<html>
+<head>
+<title>Programming patterns in RISC-V assembly: basic function calls</title>
+<style>
+body {
+	background-color: #F0F0F0;
+	margin-left: 24pt;
+	margin-right: 24pt;
+}
+h1, h2 {
+	color: #222222;
+	text-align: left;
+	font-family: sans-serif
+}
+p {
+	color: #222222;
+	font-family: serif;
+	font-size: 12pt;
+}
+pre {
+	margin-left: 14pt;
+	padding-top: 2pt;
+	padding-bottom: 2pt;
+	padding-right: 4pt;
+	padding-left: 4pt;
+	background-color: #F8F8F8;
+}
+</style>
+</head>
+<body>
+<p><a href="index.html">back to index</a></p>
+<h1>Programming patterns in RISC-V assembly: basic function calls</h1>
+
+<p><em>See how GCC constructs a basic C function call so I can be compatible with code
+that it generates</em></p>
+
+<p>Take for example, the following very basic C function:</p>
+
+<p><code>test.c</code>:</p>
+
+<pre><code>extern long bar(long arg1);
+
+long foo(long arg1)
+{
+    return 1 + bar(arg1 + 1);
+}
+</code></pre>
+
+<p>With the command <code>gcc -o test.s -S test.c</code>, GCC will assemble this into
+something like:    </p>
+
+<p><code>test.s</code>:</p>
+
+<pre><code>        .file   "test.c"
+        .option pic
+        .attribute arch, "rv64i2p1_m2p0_a2p1_f2p2_d2p2_c2p0_zicsr2p0_zifencei2p0"
+        .attribute unaligned_access, 0
+        .attribute stack_align, 16
+        .text
+        .align  1
+        .globl  foo
+        .type   foo, @function
+foo:
+.LFB0:
+        .cfi_startproc
+        addi    sp,sp,-32
+        .cfi_def_cfa_offset 32
+        sd      ra,24(sp)
+        sd      s0,16(sp)
+        .cfi_offset 1, -8
+        .cfi_offset 8, -16
+        addi    s0,sp,32
+        .cfi_def_cfa 8, 0
+        sd      a0,-24(s0)
+        ld      a5,-24(s0)
+        addi    a5,a5,1
+        mv      a0,a5
+        call    bar@plt
+        mv      a5,a0
+        addi    a5,a5,1
+        mv      a0,a5
+        ld      ra,24(sp)
+        .cfi_restore 1
+        ld      s0,16(sp)
+        .cfi_restore 8
+        .cfi_def_cfa 2, 32
+        addi    sp,sp,32
+        .cfi_def_cfa_offset 0
+        jr      ra
+        .cfi_endproc
+.LFE0:
+        .size   foo, .-foo
+        .ident  "GCC: (Debian 13.2.0-5) 13.2.0"
+        .section        .note.GNU-stack,"",@progbits
+</code></pre>
+
+<p>After cleaning up the assembler directives and other gobbledegook, a more
+readable result is (which I've annotated):</p>
+
+<pre><code>(line)
+ (1) .text                      # This is executable program text.
+ (2) .globl  foo                # Make function 'foo' externally visible.
+ (3) foo:
+ (4)         # prologue
+ (5)         addi    sp,sp,-32  # Make stack space for four doublewords.
+ (6)         sd      ra,24(sp)  # Save the return address at stackptr[3].
+ (7)         sd      s0,16(sp)  # Save the frame pointer at stackptr[2].
+ (8)         addi    s0,sp,32   # Set the frame pointer to the original 
+ (9)                            # stack value at function start.
+(10) 
+(11)         # function body
+(12)         sd      a0,-24(s0) # Save arg1 (passed via a0) to stack[-3]...
+(13)         ld      a5,-24(s0) # ... and load it back into register a5.
+(14)         addi    a5,a5,1    # Increment a5.
+(15)         mv      a0,a5      # Copy a5 to arg 1.
+(16)         call    bar@plt    # Call function 'bar'.
+(17)         mv      a5,a0      # Copy return value into register a5.
+(18)         addi    a5,a5,1    # Increment a5.
+(19)         mv      a0,a5      # Copy a5 into return value for 'foo'.
+(20)
+(21)         # epilogue
+(22)         ld      ra,24(sp)  # Restore the return address.
+(23)         ld      s0,16(sp)  # Restore the frame pointers.
+(24)         addi    sp,sp,32   # Pop four doublewords off the stack.
+(25)
+(26)         jr      ra         # Return to caller.
+</code></pre>
+
+<p>Notes about the above:</p>
+
+<ul>
+<li><p><strong>line 4</strong>: Note that I've annotated this as "prologue". This fragment of code
+is emitted by GCC for virtually all externally-callable functions, and is a
+necessary part of the <strong>C runtime</strong>, which provides functions with their own
+stack frames.</p></li>
+<li><p><strong>line 5</strong>: <code>addi</code> is the "add immediate" instruction. It adds a hard-coded
+("immediate") value to the specified register. Here the register to be added
+to is the <code>sp</code> register, which holds the stack pointer for the runtime.
+Note that GCC is making space for four 64-bit (8 byte) "doublewords", which
+wastes two doublewords of memory. This is probably because it has other uses
+for them that our simple function does not need.</p></li>
+<li><p><strong>line 6</strong>: <code>sd</code> is the "store doubleword" instruction, which writes the
+64-bit value contained in a register into the memory at the specified
+register-contained address with an immediate offset (in our case, the 24 byte
+immediate offset corresponds to three 64-bit doublewords).</p></li>
+<li><p><strong>line 8</strong>: You want the frame pointer to take the original value that the
+stack pointer had at the entrypoint of the function so that it is easy to use
+it as a base offset to index any arguments passed via the stack.</p></li>
+<li><p><strong>line 13</strong>: <code>ld</code> is the "load doubleword" instruction, which reads the 64-bit
+value at the memory address (plus an immediate!) held in one of the register
+operands.</p>
+
+<p>This seemingly wasteful storing and loading happens just because I compiled
+without asking GCC to perform any optimisations. GCC seems to allocate space
+on the stack for all local variables and does all unoptimised computation
+via the stack.</p></li>
+<li><p><strong>line 15</strong>: <code>mv</code> is "copy register" instruction. But it is a
+<em>pseudoinstrunction</em>, meaning that the RISC-V ISA doesn't actually have an
+instruction called <code>mv</code>. The assember actually replaces it with
+<code>addi a0, a5, 0</code> when generating machine code, which sets <code>a0</code> to the value
+of <code>a5</code> plus zero.</p></li>
+<li><p><strong>line 16</strong>: <code>call</code> is also a pseudoinstruction. The assembler replaces it
+with the two instruction sequence:</p>
+
+<p><code>auipc x6, offset[31:12]</code></p>
+
+<p><code>jalr x1, x6, offset[11:0]</code></p>
+
+<p>Quite a bit is happening here. Let's assume that the target function is
+contained in the current source file so the assembler knows its address
+relative to the current line (if it doesn't it leaves the calculations up to
+the program linker). It breaks this relative address into two components, an
+upper 20 bits (bits 12 to 31 inclusive), and lower 12 bits (bits 0 to 11
+inclusive). For example, if the target function is 8400 (0x20D0) bytes before
+the current line, then the upper bits are 0x00002, and the lower bits are
+0x0D0.</p>
+
+<p>First, the <code>auipc</code> "add upper immediate to program counter" instruction, adds
+the upper 20 bits of the relative address to the program counter and stores
+it in register x6 (also known as t1, "temporary register 1").</p>
+
+<p>Next, the <code>jalr</code> "jump and link register" instruction then tells the program
+counter to continue at the address specified by the register argument plus
+the lower 12 bits of the relative address. The <code>jalr</code> instruction as a side
+effect also stores the program address of the instruction following <code>jalr</code>
+so that execution can continue once the subroutine has finished.</p></li>
+<li><p><strong>lines 17-19</strong>: This also seems pretty wasteful to insist on doing all
+arithmetic on register <code>a5</code> and copying the value to/from it. Again, this is
+probably an artifact of the most conservative code generation done by GCC
+when optimisation is not be done.</p></li>
+<li><p><strong>lines 21-24</strong>: The function epilogue cleans up any runtime state modifed by
+the current function so that when execution returns to the calling function,
+the runtime looks as it did before the call.</p></li>
+<li><p><strong>line 26</strong>: You can also use the <code>ret</code> pseudoinstruction here which the
+assembler turns into the same instruction.</p></li>
+</ul>
+
+<p>Let's tidy it up even further, making it both more efficient and easier to
+understand:</p>
+
+<pre><code>.text                        # This is executable program text.
+.globl  foo                  # Make function 'foo' externally visible.
+foo:
+        # prologue
+        addi    sp, sp, -16  # Make space for two doublewords on the stack
+        sd      ra, 8(sp)    # Save the return address.
+        sd      s0, 0(sp)    # Save the frame ptr.
+        addi    s0, sp, 16   # Make a new frame.
+
+        # function body
+        addi    a0, a0, 1    # Increment arg1 in place, a0 is arg1 of 'bar'.
+        call    bar@plt      # Call function 'bar'. Return value is in a0.
+        addi    a0, a0, 1    # Increment return value from 'bar'
+
+        # epilogue
+        ld      ra,8(sp)     # Restore the return address.
+        ld      s0,0(sp)     # Restore the frame pointer.
+        addi    sp,sp,16     # Pop two words off the stack.
+
+        ret                  # Return to caller.
+</code></pre>
+
+<p>I'll be using the prologue and epilogue stanzas for almost every externally
+callable function, so I might as well simplify my life later and use an
+assembler macro:</p>
+
+<p><code>asm_macros.inc</code></p>
+
+<pre><code>.macro PROLOGUE
+addi    sp, sp, -16
+sd      ra, 8(sp)
+sd      s0, 0(sp)
+addi    s0, sp, 16
+.endm
+
+.macro EPILOGUE
+ld      ra,8(sp)
+ld      s0,0(sp)
+addi    sp,sp,16
+.endm
+</code></pre>
+
+<p>Making our final form:</p>
+
+<pre><code>.include "asm_macros.inc"
+.text                        # This is executable program text.
+.globl  foo                  # Make function 'foo' externally visible.
+foo:
+        PROLOGUE
+
+        addi    a0, a0, 1    # Increment arg1 in place, a0 is arg1 of 'bar'.
+        call    bar@plt      # Call function 'bar'. Return value is in a0.
+        addi    a0, a0, 1    # Increment return value from 'bar'
+
+        EPILOGUE
+        ret                  # Return to caller.
+</code></pre>
+
+<p>Something I did not talk about here is what happens when you want to modify the
+value of registers that a calling function might expect to not change (say,
+because you need them for computation in the current function and you don't have
+enough registers). These are called "callee-saved registers", and in brief, more
+stack space is allocated in the function prologue, and they are saved like the
+frame pointer and return address registers.</p>
+
+<p>More information:</p>
+
+<ul>
+<li><p>The <a href="http://www.gnu.org/software/binutils/">GNU <code>as</code> documentation</a> has more information about the <strong>assember
+directives</strong> (all of the directives that start with a '.', like <code>.globl</code>,
+etc.).</p></li>
+<li><p>The <a href="https://riscv.org/wp-content/uploads/2015/01/riscv-calling.pdf">RISC-V Calling Convention specification</a> has further information about
+conventions for register usage. All RISC-V registers have a regular name and
+an "ABI name" that gives some readability clues to programmers when the
+instructions being generated follow the specification.</p></li>
+<li><p>A <a href="https://msyksphinz-self.github.io/riscv-isadoc/html/index.html">handy RISC-V instruction reference</a> is always useful, since the ISA
+specification only describes what each instruction <em>does</em> but doesn't
+tell you how to textually format them for an assembler to read.</p></li>
+<li><p>The <a href="https://riscv.org/wp-content/uploads/2017/05/riscv-spec-v2.2.pdf">ISA specification</a> has a full list of <strong>pseudoinstructions</strong> and what
+they are supposed to be turned into by an assembler.</p></li>
+</ul>
+
+</body>
+</html>
