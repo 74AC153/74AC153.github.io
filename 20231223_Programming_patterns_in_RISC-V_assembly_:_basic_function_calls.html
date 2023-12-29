@@ -31,7 +31,7 @@ pre {
 <p><a href="index.html">back to index</a></p>
 <h1>Programming patterns in RISC-V assembly: basic function structure</h1>
 
-<p><em>See how GCC constructs a basic C function so I can be compatible with code
+<p><em>See how GCC structures a basic C function so I can be compatible with code
 that it generates</em></p>
 
 <p>Take for example, the following very basic C function:</p>
@@ -155,7 +155,7 @@ without asking GCC to perform any optimisations. GCC seems to allocate space
 on the stack for all local variables and does all unoptimised computation
 via the stack.</p></li>
 <li><p><strong>line 15</strong>: <code>mv</code> is "copy register" instruction. But it is a
-<em>pseudoinstrunction</em>, meaning that the RISC-V ISA doesn't actually have an
+<em>pseudoinstruction</em>, meaning that the RISC-V ISA doesn't actually have an
 instruction called <code>mv</code>. The assember actually replaces it with
 <code>addi a0, a5, 0</code> when generating machine code, which sets <code>a0</code> to the value
 of <code>a5</code> plus zero.</p></li>
